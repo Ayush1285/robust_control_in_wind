@@ -8,18 +8,23 @@ from math import sin, cos
 # Return [F, M] F is total force thrust, M is 3x1 moment matrix
 
 # Constants
-k_p_x = 30
-k_d_x = 3
-k_p_y = 30
-k_d_y = 3
-k_p_z = 1000
-k_d_z = 200
-k_p_phi = 160
-k_d_phi = 3
-k_p_theta = 160
-k_d_theta = 3
-k_p_psi = 80
-k_d_psi = 5
+
+k_p_x = 8.8
+k_p_y = 8.8
+k_p_z = 20
+
+k_d_x = 16
+k_d_y = 16
+k_d_z = 20
+
+
+k_p_phi = 1.30
+k_p_theta = 1.30
+k_p_psi = 0.03
+
+k_d_phi = 0.070
+k_d_theta = 0.070
+k_d_psi = 0.02
 
 def run(quad, des_state,t):
     x, y, z = quad.position()
@@ -35,9 +40,9 @@ def run(quad, des_state,t):
     des_psi = 0
     des_psi_dot = 0
     # Commanded accelerations
-    commanded_r_ddot_x = des_x_ddot + k_p_x * (des_x_dot - x_dot) + k_d_x * (des_x - x)
-    commanded_r_ddot_y = des_y_ddot + k_p_y * (des_y_dot - y_dot) + k_d_y * (des_y - y)
-    commanded_r_ddot_z = des_z_ddot + k_p_z * (des_z_dot - z_dot) + k_d_z * (des_z - z)
+    commanded_r_ddot_x = des_x_ddot + k_d_x * (des_x_dot - x_dot) + k_p_x * (des_x - x)
+    commanded_r_ddot_y = des_y_ddot + k_d_y * (des_y_dot - y_dot) + k_p_y * (des_y - y)
+    commanded_r_ddot_z = des_z_ddot + k_d_z * (des_z_dot - z_dot) + k_p_z * (des_z - z)
 
     # Thrust
     F = params.mass * (params.g + commanded_r_ddot_z)
@@ -51,5 +56,8 @@ def run(quad, des_state,t):
     M = np.array([[k_p_phi * (des_phi - phi) + k_d_phi * (p_des - p),
                    k_p_theta * (des_theta - theta) + k_d_theta * (q_des - q),
                    k_p_psi * (des_psi - psi) + k_d_psi * (r_des - r)]]).T
+    
+    des_rpy = np.array([des_phi, des_theta, des_psi])
+    
+    return F, M, des_rpy
 
-    return F, M

@@ -5,6 +5,8 @@ import scipy.integrate as integrate
 from utils.quaternion import Quaternion
 from utils.utils import RPYToRot, RotToQuat, RotToRPY
 import model.params as params
+import math as m
+from windfield import Wind
 
 class Quadcopter:
     """ Quadcopter class
@@ -20,6 +22,7 @@ class Quadcopter:
         """ pos = [x,y,z] attitude = [roll,pitch,yaw]
             """
         self.state = np.zeros(13)
+        self.roll, self.pitch, self.yaw = attitude
         roll, pitch, yaw = attitude
         rot    = RPYToRot(roll, pitch, yaw)   #Roll pitch yaw to Rotation matrix ZXY convention
         quat   = RotToQuat(rot)
@@ -30,6 +33,8 @@ class Quadcopter:
         self.state[4] = quat[1]
         self.state[5] = quat[2]
         self.state[6] = quat[3]
+        self.accel = np.zeros(3)
+        self.wind = Wind()
 
     def A(self):
         ''' Linear State-Space System Matrix'''
@@ -91,17 +96,22 @@ class Quadcopter:
     def omega(self):
         return self.state[10:13]
 
-    def state_dot(self, state, t, F, M):
+    def state_dot(self, state, t, F, M,aerodynamic_forces):
         ''' generates derivative of states according to quadcopter equations of motion'''
-
+ 
         x, y, z, qw, qx, qy, qz, xdot, ydot, zdot, p, q, r = state
         quat = np.array([qw,qx,qy,qz])
 
         bRw = Quaternion(quat).as_rotation_matrix() # world to body rotation matrix
         wRb = bRw.T # orthogonal matrix inverse = transpose
+
+
         # acceleration - Newton's second law of motion
-        accel = 1.0 / params.mass * (wRb.dot(np.array([[0, 0, F]]).T)
-                    - np.array([[0, 0, params.mass * params.g]]).T)
+
+        accel = 1.0 / params.mass * (wRb.dot((np.array([[0, 0, F]]) + aerodynamic_forces).T)
+                    - np.array([[0, 0, params.mass * params.g]]).T )
+        self.accel = accel
+        #print(accel)
         # angular velocity - using quternion
         # http://www.euclideanspace.com/physics/kinematics/angularvelocity/
         K_quat = 2.0; # this enforces the magnitude 1 constraint for the quaternion
@@ -141,6 +151,32 @@ class Quadcopter:
                
         prop_thrusts = params.invA.dot(np.r_[F, M])
         prop_thrusts_clamped = np.maximum(np.minimum(prop_thrusts, params.maxF/4), params.minF/4)
+        omsq = np.array([prop_thrusts_clamped[0]/params.km, prop_thrusts_clamped[1]/params.km, prop_thrusts_clamped[2]/params.km, prop_thrusts_clamped[3]/params.km])
+    
         F = np.sum(prop_thrusts_clamped)
+        #F = F = np.sum(prop_thrusts_clamped)  # for clamped z thrust
+       
         M = params.A[1:].dot(prop_thrusts_clamped)
-        self.state = integrate.odeint(self.state_dot, self.state, [0,dt], args = (F, M))[1]
+        #M = params.A[1:].dot(prop_thrusts_clamped)   # for clamped moments
+        vw,u,v = self.wind.windfield_gen(self.state[0],self.state[1])
+        vw = 2*vw
+        u = 2*u
+        v = 2*v
+        #print(np.linalg.norm(vw))
+        #vw = np.array([1, 1, 1])
+        vd = np.array([vw[0]-self.state[7], vw[1]-self.state[8], vw[2]-self.state[9]])
+        sp = m.sqrt(vd[0]**2 + vd[1]**2 + vd[2]**2)  
+
+        # Aerodynamic forces and moments
+        Fx = 0.5 * 1.225 * 0.08 * sp * vd[0]
+        Fy = 0.5 * 1.225 * 0.08 * sp * vd[1]
+        Fz = 0.5 * 1.225 * 0.08 * sp * vd[2]
+        aerodynamic_forces = np.array([[Fx,Fy,Fz]])
+        #aerodynamic_forces = np.array([[0,0,0]])
+
+        #Thrust reaction torques
+        '''Mt = np.array([[params.km*(omsq[3]-omsq[1])*params.L, params.kf*(omsq[0]-omsq[2])*params.L, 0]]).T
+        Mq = np.array([[0, 0, params.kf*(-omsq[0]+omsq[1]-omsq[2]+omsq[3])]]).T
+        M_total = Mt + Mq + M'''
+        self.state = integrate.odeint(self.state_dot, self.state, [0,dt], args = (F, M,aerodynamic_forces))[1]
+        return prop_thrusts, u,v
